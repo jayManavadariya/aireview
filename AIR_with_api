@@ -1,4 +1,4 @@
-// working code with api not call again without edit input 
+// working code with api not call again without edit input but in this checkbox logic was mine 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Editor, EditorState, ContentState, convertFromRaw, convertToRaw } from 'draft-js';
 import ListOnlyEditor from 'imports/generator/ui/pages/ListOnlyEditor';
