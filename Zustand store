@@ -1,0 +1,95 @@
+import { create } from 'zustand';
+
+// Updated Zustand store
+export const useReviewStore = create((set, get) => ({
+  reviewData: null,
+  loadingReview: false,
+  errorReview: null,
+  hasFetched: false,
+  // Add these to preserve edited states
+  checkedItems: {},
+  editorStates: {},
+  inputValues: {},
+  createdItems: {},
+  appliedItems: {},
+
+  setReviewData: (data) => set({ reviewData: data, hasFetched: true }),
+  setLoading: (loading) => set({ loadingReview: loading }),
+  setError: (error) => set({ errorReview: error }),
+
+  // single checkbox toggle
+  setCheckedItem: (key, value) =>
+    set((state) => ({
+      checkedItems: { ...state.checkedItems, [key]: value },
+    })),
+
+  // setAllCheckedItems: (items) => set({ checkedItems: items }),
+  setAllCheckedItems: (items) =>
+    set(() => ({
+      checkedItems: { ...items },
+    })),
+
+  setEditorState: (key, value) =>
+    set((state) => ({
+      editorStates: { ...state.editorStates, [key]: value },
+    })),
+
+  setInputValue: (key, value) =>
+    set((state) => ({
+      inputValues: { ...state.inputValues, [key]: value },
+    })),
+
+  setCreatedItem: (key, value) =>
+    set((state) => ({
+      createdItems: { ...state.createdItems, [key]: value },
+    })),
+
+  setAppliedItem: (key, value) =>
+    set((state) => ({
+      appliedItems: { ...state.appliedItems, [key]: value },
+    })),
+
+  clearAllAppliedItems: () => set({ appliedItems: {} }),
+
+  clearAllCreatedItems: () => set({ createdItems: {} }),
+
+  clearAndRefreshData: async (resumeId, token, extractPlainText) => {
+    try {
+      set({ loadingReview: true, errorReview: null });
+      const data = await FetchDataFromApi({ resumeId }, token);
+
+      // Reset everything on manual refresh
+      const initialCheckedItems = {};
+      const initialInputValues = {};
+      const initialEditorStates = {};
+
+      data.edits.forEach((edit, index) => {
+        const key = edit.isNewItem ? `${edit.blockId}_${edit.field}_${index}` : `${edit.itemId}_${edit.field}`;
+        initialCheckedItems[key] = true;
+        const newValue = typeof edit.newValue === 'string' ? edit.newValue : JSON.stringify(edit.newValue);
+
+        if (edit.field === 'description') {
+          initialEditorStates[key] = newValue;
+        } else {
+          initialInputValues[key] = extractPlainText(newValue);
+        }
+      });
+
+      set({
+        reviewData: data,
+        loadingReview: false,
+        editorStates: initialEditorStates,
+        inputValues: initialInputValues,
+        checkedItems: initialCheckedItems,
+        hasFetched: true,
+        createdItems: {},
+        appliedItems: {},
+      });
+    } catch (err) {
+      set({ errorReview: err.message, loadingReview: false });
+    }
+  },
+}));
+
+
+
