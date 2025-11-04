@@ -1,0 +1,703 @@
+GeneratorPage.js
+import marvelEmitter from '@marvelapp/react-ab-test/lib/emitter';
+import { Push } from 'components/Link';
+import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
+import PropTypes from 'prop-types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Experiment as MarvelExperiment, Variant as MarvelVariant } from '@marvelapp/react-ab-test';
+import { useMutation, useQuery } from 'react-apollo';
+import { Form, FormProvider, useForm } from 'react-hook-form';
+import styled, { css } from 'styled-components';
+import { GeneralContextProvider } from '/imports/core/api/generalContext';
+import { useResponsive } from '/imports/core/api/responsiveContext';
+import useIntl from '/imports/core/api/useIntl';
+import useWindowSize from '/imports/core/api/useWindowSize';
+import useTracking from '/imports/core/hooks/useTracking';
+import Page from '/imports/core/ui/atoms/Page';
+import ErrorOccured from '/imports/core/ui/components/ErrorOccured';
+import { blockImmutableUpdate } from '/imports/generator/api/apollo/client/helpers';
+import {
+  UPDATE_BLOCK_FIELD,
+  UPDATE_BLOCK_ITEM_FIELD,
+  UPDATE_RESUME_DETAIL,
+} from '/imports/generator/api/apollo/client/mutations';
+import { GET_RESUME } from '/imports/generator/api/apollo/client/queries';
+import { updateImmutableDataSSR } from '/imports/generator/api/helpers';
+import { RESUME_ONBOARDING_STEPS_PAGES } from '/imports/generator/api/onboarding';
+import WebsiteButtonWrapper from '/imports/generator/ui/atoms/WebsiteButtonWrapper';
+import GeneratorForm from '/imports/generator/ui/components/GeneratorForm';
+import useOptimiseResume from '/imports/generator/ui/components/hook/useAiOptimisedResume';
+import { useScreenshotBlur } from '/imports/generator/ui/components/hook/useScreenshotBlur';
+import Preview from '/imports/generator/ui/components/Preview';
+import { WatermarkWrapper } from '/imports/generator/ui/pages/PreviewWrapper';
+import ResumeGeneratorSkeleton from '/imports/generator/ui/skeleton/ResumeGeneratorSkeleton';
+import { clickToEditRedirection, isWithClickToEditVariant } from '/imports/pdf/core/api/helpers';
+import { cookieParser, getExpSkillsTagVars, isPaidUser, removeExperiment } from '/lib/helpers';
+import { apolloClient as client } from '/lib/initApollo';
+import AIReviewSection from '/imports/generator/ui/pages/AIReviewSection';
+// import { useLearningZustand } from '/zustand/learningZustand';
+
+import { fetchData } from '/zustand/dataFetchZustand';
+const ResumeAnalysis = dynamic(() => import('/imports/generator/ui/components/ResumeAnalysis'), {
+  ssr: false,
+});
+
+const componentsMap = {
+  edit: GeneratorForm,
+  ...RESUME_ONBOARDING_STEPS_PAGES.reduce((res, item) => {
+    res[item.status] = item.component;
+    return res;
+  }, {}),
+};
+
+ const extractPlainText = (value) => {
+    if (!value) return '';
+    try {
+      const parsed = JSON.parse(value);
+
+      if (parsed.blocks && Array.isArray(parsed.blocks)) {
+        return parsed.blocks.map((b) => b.text).join('\n');
+      }
+
+      if (typeof parsed === 'object' && parsed !== null) {
+        const firstValue = Object.values(parsed).find((v) => typeof v === 'string');
+        return firstValue || '';
+      }
+
+      return String(parsed);
+    } catch {
+      return value;
+    }
+  };
+
+function RenderButtons({ currentUser, variant, userRefetch, BlockGoogleMapCountry }) {
+  const router = useRouter();
+  const { locale } = useIntl();
+  const { trackEvent } = useTracking();
+  const { query } = router;
+  const blurRef = useRef();
+  const { isMobile, host } = useResponsive();
+  const { width, height } = useWindowSize();
+  const [watermarkWidth, setWatermakWidth] = useState(0);
+  const [referenceResume, setReferenceResume] = useState(null);
+  const { resumeId, step, intro, targetField, blockItemId, parentWrapperId, isDraft } = query;
+  const { token } = cookieParser();
+  const [tooltipPreviewOpen, setTooltipPreview] = useState(false);
+  const [countTooltipShow, setCountTooltipShow] = useState(0);
+  const [localResumeData, setLocalResumeData] = useState(null);
+  
+  const isWithout = marvelEmitter.getActiveVariant('exp_ai_review_buttons') === 'with_buttons';
+  // const { isVisible, setIsVisible } = useLearningZustand();
+  const hookFormMethods = useForm({ mode: 'onChange' });
+  const {
+    formState: { isValid, errors },
+  } = hookFormMethods;
+
+  const { loading, error, data, refetch } = useQuery(GET_RESUME, {
+    variables: { resumeId },
+  });
+
+  const varRectruitersTips = marvelEmitter.getActiveVariant('exp_new_recruiter_tips_ab_test');
+
+  const getResume = data?.getResume;
+
+  const activeStagingBlurVariant = marvelEmitter.getActiveVariant('exp_staging_blur');
+  let blurExpShowCondition;
+  if (isPaidUser(currentUser?.role)) {
+    blurExpShowCondition = false;
+  } else {
+    const isFinishStep = getResume?.currentStep === 'finish';
+    const isWideScreen = width >= 980;
+    const isWithBlurVariant = activeStagingBlurVariant === 'with_blur';
+
+    if (activeStagingBlurVariant) {
+      blurExpShowCondition = isWithBlurVariant && isFinishStep;
+    } else {
+      blurExpShowCondition = isWideScreen && isFinishStep;
+    }
+  }
+
+  const isBlurred = useScreenshotBlur(blurRef, blurExpShowCondition, trackEvent);
+
+  const optimiseResume = useOptimiseResume(token, locale, currentUser);
+  const notWithAddittionalBlocks =
+    marvelEmitter.getActiveVariant('exp_add_block_step') !== 'with_additional_add_block_step';
+
+  const isValidRef = useRef();
+  const fetchResumeData = async () => {
+    const { data } = await client.query({
+      query: GET_RESUME,
+      variables: { resumeId: getResume?.referenceResumeId },
+    });
+    setReferenceResume(data.getResume);
+  };
+
+  const handleTooltipPreviewState = useCallback(
+    (state) => {
+      setTooltipPreview(state);
+    },
+    [tooltipPreviewOpen],
+  );
+
+  useEffect(() => {
+    if (countTooltipShow > 0) {
+      window.localStorage.setItem('tooltip-preview-count', countTooltipShow);
+    }
+  }, [countTooltipShow]);
+
+  useEffect(() => {
+    if (isValidRef.current != isValid && errors?.email?.type !== 'isEmailDuplicate') {
+      isValidRef.current = isValid;
+      hookFormMethods.trigger();
+    }
+  }, [isValid]);
+
+  useEffect(() => {
+    if (!loading && getResume?.referenceResumeId) fetchResumeData();
+  }, [loading]);
+
+  useEffect(() => {
+    const isWithClickToEditFeature = isWithClickToEditVariant(step);
+    if (isWithClickToEditFeature && targetField && !isMobile) {
+      clickToEditRedirection(blockItemId, targetField, parentWrapperId, isDraft === 'true');
+    }
+    removeExperiment('exp_template_cv');
+  }, [blockItemId]);
+
+  useEffect(() => {
+    if (!getResume || !localResumeData) return;
+    setLocalResumeData(updateImmutableDataSSR(localResumeData, getResume));
+  }, [getResume]);
+
+  // This useEffect hook checks if the query parameter "step" is set to "other" and if so,
+  // it changes the query parameter to "summary" and re-renders the page. This is done
+  useEffect(() => {
+    if (query?.step && query?.step == 'other' && notWithAddittionalBlocks) {
+      Push(`/resume/${resumeId}/summary?userId=${currentUser?.id}`, locale);
+    }
+    const tooltipCount = window.localStorage.getItem('tooltip-preview-count');
+    if (tooltipCount) {
+      setCountTooltipShow(parseInt(tooltipCount) || 0);
+    }
+  }, []);
+
+  useEffect(() => {
+    const skiillsBlock = data?.getResume.blocks.find((block) => block.type === 'SKILLS');
+    const exp_tag_variant = getExpSkillsTagVars();
+    if (skiillsBlock && skiillsBlock?.showTagUI == null) {
+      let value = null;
+      if (!isMobile) value = false;
+      else
+        switch (exp_tag_variant) {
+          case 'with_tags_default_bar':
+            value = false;
+            break;
+          case 'with_tags_default_tags':
+            value = true;
+            break;
+        }
+      if (!value) return;
+      blockImmutableUpdate(setResume, skiillsBlock.id, 'showTagUI', value);
+      client.mutate({
+        mutation: UPDATE_BLOCK_FIELD,
+        variables: {
+          docId: resumeId,
+          blockId: skiillsBlock.id,
+          field: 'showTagUI',
+          value,
+        },
+      });
+    }
+  }, [data]);
+
+  useEffect(() => {
+    if (!blurRef.current) return;
+    setWatermakWidth(blurRef.current?.clientWidth);
+  }, [blurRef, loading]);
+
+  // testing
+
+  // for togle buttons
+  const [updateKey, setUpdateKey] = useState(false);
+  const [isPreview, setIsPreview] = useState(true);
+  const refreshFn = useRef(null);
+  const handleRefresh = () => {
+      if (refreshFn.current) {
+      refreshFn.current(); // directly re-fetch data
+    }
+  };
+
+  const triggerFormUpdate = useCallback(() => {
+     console.log('🔄 Triggering form update...');
+    // setUpdateKey(prev => !prev);
+    setUpdateKey((prev) => {
+      const newValue = !prev;
+       console.log('✅ updateKey set to:', newValue);
+      return newValue;
+    });
+  }, []);
+
+  // new testing
+  // const refreshResumeData = useCallback(async () => {
+  //   try {
+  //     console.log('🔄 Refreshing resume data...');
+  //     const { data } = await refetch();
+  //     if (data?.getResume) {
+  //       setLocalResumeData(data.getResume);
+  //       console.log('✅ Resume data refreshed successfully');
+  //     }
+  //   } catch (error) {
+  //     console.error('x Error refreshing resume Data: ', error);
+  //   }
+  // }, [refetch]);
+
+  // const triggerFormUpdate = useCallback(() => {
+  //   console.log('🔄 Triggering comprehensive form update...');
+
+  //   refreshResumeData();
+  //   setUpdateKey((prev) => !prev);
+  // }, [refreshResumeData]);
+
+  // Add this useEffect to monitor updateKey changes
+  // useEffect(() => {
+  //   // console.log('📝 updateKey changed to:', updateKey);
+  // }, [updateKey]);
+  // testing end here
+
+  if (error) return <ErrorOccured />;
+
+  if (loading) return <ResumeGeneratorSkeleton />;
+  const Component = componentsMap[step];
+
+  // here
+  const resume = localResumeData || getResume || {};
+  const experienceBlockNotEmpty = resume?.blocks?.find((block) => block.type === 'EMPLOYMENT')?.items?.length > 0;
+  const showPreviewWidth = 800;
+
+  const getExpScoring = () => {
+    return marvelEmitter.getActiveVariant('exp_scoring_plugin_v2');
+  };
+
+  const getBucketId = () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    let bucketId = urlParams.get('bucketId');
+    if (window && !bucketId) return window.localStorage.getItem('bucketId');
+    return bucketId;
+  };
+
+  const shouldResumeScoreBeActive = () => {
+    const bucketId = getBucketId();
+
+    // If this is an adapted resume, bypass language and step checks
+    if (query?.adaptedResume == 'true') return true;
+    const isFinishStep = query?.step === 'finish';
+
+    const supportedLanguages = ['en', 'fr', 'es', 'ar'];
+    const hasValidUILocale = supportedLanguages.includes(locale);
+    const hasValidResumeLanguage = supportedLanguages.includes(resume.settings.language);
+
+    return isFinishStep && hasValidUILocale && hasValidResumeLanguage && bucketId;
+  };
+
+  const setResume = (localResume, getResumeData) => {
+    if (localResume) {
+      setLocalResumeData({ ...localResume });
+      // console.log('Updated getResume:', localResume);
+    }
+
+    if (getResumeData) {
+      return resume;
+    }
+  };
+  // console.log('isVisible', isVisible);
+  // const handleLearning = () => {
+  //   setIsVisible(!isVisible);
+  // };
+
+  return (
+    <GeneralContextProvider
+      value={{
+        refetch,
+        designV2: true,
+        BlockGoogleMapCountry: BlockGoogleMapCountry,
+        optimiseResume,
+        currentResume: resume,
+        setCurrentResume: setResume,
+        tooltipPreview: {
+          isOpen: tooltipPreviewOpen,
+          handleTooltipPreviewState,
+        },
+        forceUpdateKey: updateKey, // ← Add to context
+        triggerFormUpdate: triggerFormUpdate, // ← Add to context
+      }}
+    >
+      <PageWrap isHeight={height}>
+        <Side id="scroll-cont" showPreviewWidth={showPreviewWidth} isHeight={height}>
+          <FormProvider {...hookFormMethods}>
+            <Form>
+              <Component
+                intro={intro}
+                resume={resume}
+                updateImmue={setResume}
+                referenceResume={referenceResume}
+                currentUser={currentUser}
+                step={step}
+                isFormValid={isValid}
+                varRectruitersTips={varRectruitersTips}
+                forceUpdateKey={updateKey}
+                key={`component-${step}-${updateKey}`} // Add key to force re-render
+                onForceUpdate={triggerFormUpdate}
+              />
+            </Form>
+          </FormProvider>
+        </Side>
+        <Side
+          onMouseEnter={() => {
+            if (countTooltipShow > 7) return false;
+            setCountTooltipShow(countTooltipShow + 1);
+
+            setTooltipPreview(true);
+          }}
+          onMouseLeave={() => setTooltipPreview(false)}
+          isHeight={height}
+          right
+          showPreviewWidth={showPreviewWidth}
+        >
+          <MainWrapper>
+            <Inner ref={blurRef} $blur={isBlurred}>
+              <Wrapper>
+                {!isWithout && (
+                  <Preview
+                    updateImmue={setResume}
+                    resume={resume}
+                    updatesCount={resume ? resume.updatesCount : null}
+                    width={width}
+                    height={height}
+                    variant={variant}
+                    userRefetch={userRefetch}
+                    currentUser={currentUser}
+                  />
+                )}
+
+                {isWithout && (
+                  <Submain>
+                    <Btnwrapper>
+                      {/* <MyBtn onClick={handleLearning} isVisible={isVisible}>
+                        yes
+                      </MyBtn> */}
+                      <PreviewBtn onClick={() => setIsPreview(true)} isPreview={isPreview}>
+                        Preview
+                      </PreviewBtn>
+
+                      <AIReviewBtn onClick={() => setIsPreview(false)} isPreview={isPreview}>
+                        AI Review
+                      </AIReviewBtn>
+                    </Btnwrapper>
+
+                    <div>
+                      {isPreview ? (
+                        <Preview
+                          updateImmue={setResume}
+                          resume={resume}
+                          updatesCount={resume ? resume.updatesCount : null}
+                          width={width}
+                          height={height}
+                          variant={variant}
+                          userRefetch={userRefetch}
+                          currentUser={currentUser}
+                        />
+                      ) : (
+                        <AIReviewContainer>
+                          <AIHeader>
+                            <h3>🧠 AI Review Edits</h3>
+                            <RefreshButton onClick={handleRefresh}>🔄 Refresh</RefreshButton>
+                          </AIHeader>
+                          <AIContent>
+                            <AIReviewSection
+                              resumeId={resumeId}
+                              token={token}
+                              onUpdateComplete={triggerFormUpdate}
+                              onRefreshRef={refreshFn}
+                            />
+                          </AIContent>
+                        </AIReviewContainer>
+                      )}
+                    </div>
+                  </Submain>
+                )}
+              </Wrapper>
+            </Inner>
+          </MainWrapper>
+          {shouldResumeScoreBeActive() && (
+            <ResumeAnalysis updateImmue={setResume} resume={resume} currentUser={currentUser} />
+          )}
+        </Side>
+      </PageWrap>
+    </GeneralContextProvider>
+  );
+}
+
+RenderButtons.displayName = 'RenderButtons';
+
+RenderButtons.propTypes = {
+  currentUser: PropTypes.object,
+  variant: PropTypes.string,
+  userRefetch: PropTypes.func,
+  BlockGoogleMapCountry: PropTypes.array,
+};
+
+const PreviewBtn = styled.div`
+background: ${({isPreview}) => (isPreview ? '#0070f3' : '#cfcdcdff')};
+color: ${({isPreview}) => (isPreview ? '#fff' : '#000')};
+padding: 8px 16px;
+text-align: center;
+border-radius: 6px;
+border: none;
+cursor: pointer;
+min-width: 100px;
+transition: all 0.2s ease;
+`;
+
+const AIReviewBtn = styled.div`
+  background: ${({ isPreview }) => (!isPreview ? '#0070f3' : '#cfcdcdff')};
+  color: ${({ isPreview }) => (!isPreview ? '#fff' : '#000')};
+  padding: 8px 16px;
+  border-radius: 6px;
+  text-align: center;
+  border: none;
+  cursor: pointer;
+  min-width: 100px;
+  transition: all 0.2s ease;
+`;
+
+const Btnwrapper = styled.div`
+ display: flex;
+justify-content: center;
+align-items: center;
+gap: 12px;
+margin-bottom: 12px;
+width: 60%;
+`;
+
+const Submain = styled.div`
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+margin-bottom: 16px;
+margin-top: 16px;
+`;
+
+const AIReviewContainer = styled.div`
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 24px;
+  margin: 20px auto;
+  min-width: 650px;
+  max-width: 800px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  font-size: 16px;  
+`;
+
+const AIHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  h3 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #1a1a1a;
+    margin: 0;
+  }
+`;
+
+const RefreshButton = styled.button`
+  background: #f0f0f5;
+  border: none;
+  color: #333;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-weight: 500;
+
+  &:hover {
+    background: #e4e4ec;
+  }
+`;
+
+const AIContent = styled.div`
+  max-height: 630px;
+  overflow-y: auto;
+  padding-right: 8px;
+  border-top: 1px solid #e6e6eb;
+  border-bottom: 1px solid #e6e6eb;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+  &::-webkit-scrollbar-thumb {
+    background-color: #cfcfd7;
+    border-radius: 4px;
+  }
+`;
+
+// const MyBtn = styled.div`
+//   padding: 10px;
+//   border: 1px solid #f00;
+//   cursor: pointer;
+
+//   ${({ isVisible }) =>
+//     isVisible &&
+//     css`
+//       border: 1px solid black;
+//     `}
+// `;
+
+const PageWrap = styled(Page)`
+  display: flex;
+  justify-content: center;
+  width: 50%;
+  min-height: ${(p) => p.isHeight}px;
+
+  ${(p) => p.theme.min('lg')`
+    max-width: 960px;
+  `};
+`;
+
+const MainWrapper = styled.div`
+  display: flex;
+  position: relative;
+`;
+
+const Inner = styled.div`
+  display: table;
+  height: 100%;
+  margin: 0 auto;
+
+  ${({ $blur }) =>
+    $blur &&
+    css`
+      filter: blur(8px);
+      pointer-events: none;
+    `}
+`;
+
+const Wrapper = styled.div`
+  height: 100%;
+  display: table-cell;
+  vertical-align: middle;
+`;
+const Side = styled.div`
+  position: absolute;
+  top: 0;
+  left: ${(p) => (p.right ? '50vw' : 0)};
+  width: 50vw;
+  height: ${(p) => p.isHeight}px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  flex: 1;
+  background-color: #f7f7fc;
+  ${({ theme: { isRTL }, right }) =>
+    isRTL &&
+    !right &&
+    css`
+      right: 0;
+      left: auto;
+    `}
+
+  ${({ theme: { isRTL }, right }) =>
+    isRTL &&
+    right &&
+    css`
+      right: 50vw;
+      left: auto;
+      direction: rtl;
+    `}
+
+  &::-webkit-scrollbar {
+    -webkit-appearance: none;
+  }
+  &::-webkit-scrollbar:vertical {
+    width: 11px !important ;
+  }
+  &::-webkit-scrollbar:horizontal {
+    height: 11px;
+  }
+  &:hover::-webkit-scrollbar-thumb {
+    background: #adacac;
+    border-radius: 10px;
+  }
+
+  ${({ theme }) =>
+    theme.max('xs')`
+    &::-webkit-scrollbar {
+      display: none;
+    }
+    overflow-x: hidden;
+  `}
+
+  ${(p) =>
+    !p.right &&
+    css`
+      @media (max-width: ${({ showPreviewWidth }) => showPreviewWidth && showPreviewWidth}px) {
+        width: 100%;
+        margin: 0 auto;
+      }
+    `}
+
+  ${(p) =>
+    p.right &&
+    css`
+      background-color: #e5e4ea;
+      user-select: none;
+      z-index: 3;
+      width: 50vw;
+      @media (max-width: ${({ showPreviewWidth }) => showPreviewWidth}px) {
+        display: none !important;
+      }
+      &:hover {
+        ${WebsiteButtonWrapper} {
+          display: block;
+        }
+      }
+    `}
+
+
+  &:hover .preview-button {
+    display: flex;
+  }
+  &:hover .ai-button {
+    display: flex;
+  }
+  &:hover .ai-deactive-modal {
+    display: flex;
+  }
+`;
+
+const GeneratorPage = (props) => {
+  const router = useRouter();
+  const { query } = router;
+  const { step } = query;
+  if (step === 'finish') {
+    return (
+      <MarvelExperiment name="exp_ai_review_buttons">
+        <MarvelVariant name="control">
+          <RenderButtons {...props} />
+        </MarvelVariant>
+        <MarvelVariant name="with_buttons">
+          <RenderButtons {...props} />
+        </MarvelVariant>
+      </MarvelExperiment>
+    );
+  }
+  return <RenderButtons {...props} />;
+};
+
+export default GeneratorPage;
