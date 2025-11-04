@@ -53,43 +53,10 @@ export const useReviewStore = create((set, get) => ({
 
   clearAllCreatedItems: () => set({ createdItems: {} }),
 
-  clearAndRefreshData: async (resumeId, token, extractPlainText) => {
-    try {
-      set({ loadingReview: true, errorReview: null });
-      const data = await FetchDataFromApi({ resumeId }, token);
-
-      // Reset everything on manual refresh
-      const initialCheckedItems = {};
-      const initialInputValues = {};
-      const initialEditorStates = {};
-
-      data.edits.forEach((edit, index) => {
-        const key = edit.isNewItem ? `${edit.blockId}_${edit.field}_${index}` : `${edit.itemId}_${edit.field}`;
-        initialCheckedItems[key] = true;
-        const newValue = typeof edit.newValue === 'string' ? edit.newValue : JSON.stringify(edit.newValue);
-
-        if (edit.field === 'description') {
-          initialEditorStates[key] = newValue;
-        } else {
-          initialInputValues[key] = extractPlainText(newValue);
-        }
-      });
-
-      set({
-        reviewData: data,
-        loadingReview: false,
-        editorStates: initialEditorStates,
-        inputValues: initialInputValues,
-        checkedItems: initialCheckedItems,
-        hasFetched: true,
-        createdItems: {},
-        appliedItems: {},
-      });
-    } catch (err) {
-      set({ errorReview: err.message, loadingReview: false });
-    }
-  },
 }));
+
+
+
 
 
 
