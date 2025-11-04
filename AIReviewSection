@@ -142,7 +142,7 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
       clearAllCreatedItems();
       clearAllAppliedItems();
     };
-  }, []); 
+  }, []);
 
   useEffect(() => {
     if (isFirstRender && !hasFetched) {
@@ -159,7 +159,7 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
   const handleCheckbox = useCallback(
     (key, parentGroupKey = null) => {
       if (parentGroupKey && !groupParentStatus[parentGroupKey]) {
-        return; 
+        return;
       }
       setCheckedItem(key, !checkedItems[key]);
     },
@@ -183,7 +183,7 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
     },
     [groupParentStatus, checkedItems, setAllCheckedItems],
   );
-  
+
   const groupedNewItems = (reviewData?.edits || []).reduce((acc, edit, idx) => {
     if (!edit.isNewItem || edit.field === 'description') return acc;
     const groupKey = `${edit.blockId}_${edit.field}`;
@@ -200,36 +200,42 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
   const toggleLabel = allParentsSelected ? 'Deselect All' : 'Select All';
 
   const handleToggleSelectAll = useCallback(() => {
-    const groupedNewItems = (reviewData?.edits || []).reduce((acc, edit, idx) => {
-      if (!edit.isNewItem || edit.field === 'description') return acc;
-      const groupKey = `${edit.blockId}_${edit.field}`;
-      if (!acc[groupKey]) acc[groupKey] = { edits: [], firstIdx: idx };
-      acc[groupKey].edits.push({ ...edit, originalIndex: idx });
-      return acc;
-    }, {});
+    if (!reviewData?.edits) return;
 
-    const parentGroupKeys = Object.keys(groupedNewItems);
+    const totalEditsCount = reviewData.edits.length;
+    const currentlyCheckedCount = Object.values(checkedItems).filter(Boolean).length;
 
-    const allParentsSelected = parentGroupKeys.every((groupKey) => groupParentStatus[groupKey]);
-    const updated = {};
+    const shouldSelectAll = currentlyCheckedCount < totalEditsCount;
+
+    const updatedCheckedItems = { ...checkedItems };
     const updatedGroupStatus = { ...groupParentStatus };
 
-    parentGroupKeys.forEach((groupKey) => {
+    reviewData.edits.forEach((edit, index) => {
+      const key = edit.isNewItem ? `${edit.blockId}_${edit.field}_${index}` : `${edit.itemId}_${edit.field}`;
+      updatedCheckedItems[key] = shouldSelectAll;
+
+      // Update group parent status for grouped items
+      if (edit.isNewItem && edit.field !== 'description') {
+        const groupKey = `${edit.blockId}_${edit.field}`;
+        if (updatedGroupStatus[groupKey] !== undefined) {
+          updatedGroupStatus[groupKey] = shouldSelectAll;
+        }
+      }
+    });
+
+    // Ensure all group parents are properly updated
+    Object.keys(groupedNewItems).forEach((groupKey) => {
       const itemKeys = groupedNewItems[groupKey].edits.map(
         (edit) => `${edit.blockId}_${edit.field}_${edit.originalIndex}`,
       );
-
-      updatedGroupStatus[groupKey] = !allParentsSelected;
-
-      itemKeys.forEach((key) => {
-        updated[key] = !allParentsSelected;
-      });
+      const allGroupSelected = itemKeys.every((key) => updatedCheckedItems[key]);
+      updatedGroupStatus[groupKey] = allGroupSelected;
     });
 
-    setAllCheckedItems(updated);
+    setAllCheckedItems(updatedCheckedItems);
     setGroupParentStatus(updatedGroupStatus);
-  }, [checkedItems, setAllCheckedItems, groupParentStatus, reviewData]);
-
+  }, [checkedItems, setAllCheckedItems, groupParentStatus, reviewData, groupedNewItems]);
+  
   const handleEditorChange = useCallback(
     (key, value) => {
       const content = value && typeof value === 'object' && 'target' in value ? value.target.value : value;
@@ -275,7 +281,7 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
     if (!value) return '';
 
     if (typeof value === 'string') {
-     if (value.trim().startsWith('{') || value.trim().startsWith('[')) {
+      if (value.trim().startsWith('{') || value.trim().startsWith('[')) {
         try {
           const parsed = JSON.parse(value);
           return extractPlainText(parsed);
@@ -286,7 +292,7 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
       return value;
     }
 
-   if (typeof value === 'object' && value !== null) {
+    if (typeof value === 'object' && value !== null) {
       if (value.blocks && Array.isArray(value.blocks)) {
         return value.blocks.map((b) => b.text).join('\n');
       }
@@ -340,7 +346,6 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
   const needApiCall = useCallback(
     (checkedKeys) => {
       if (!reviewData?.edits) return false;
-      // console.log('🔍 Checking if API call needed for keys:', checkedKeys);
 
       for (const key of checkedKeys) {
         const edit = reviewData?.edits.find((e, i) => {
@@ -349,7 +354,6 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
         });
         if (edit) {
           const needsCall = hasFieldBeenModified(key, edit);
-          //  console.log(`🔍 Key ${key} needs API call:`, needsCall);
           if (needsCall) {
             return true;
           }
@@ -401,11 +405,7 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
       return;
     }
 
-    // console.log('🔍 Starting apply changes with keys:', checkedKeys);
-    // console.log('🔍 Current appliedItems:', appliedItems);
-
     if (!needApiCall(checkedKeys)) {
-      // console.log('🔄 No changes detected, updating UI state only');
       checkedKeys.forEach((key) => {
         setAppliedItem(key, true);
       });
@@ -429,7 +429,6 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
 
         if (!edit) continue;
 
-        // 🆕 CHECK: Skip if this item was already applied and not modified
         if (appliedItems[key] && !hasFieldBeenModified(key, edit)) {
           console.log('⏭️ Skipping already applied item:', key);
           continue;
@@ -443,7 +442,7 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
             console.log('⚠️ Missing editor value for key:', key);
             continue;
           }
-          // console.log('📝 Editor value for description:', editorValue);
+
           if (typeof editorValue === 'string' && editorValue.includes('"blocks"')) {
             currentValue = editorValue;
           } else if (typeof editorValue === 'string') {
@@ -453,7 +452,6 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
             currentValue = typeof edit.newValue === 'string' ? edit.newValue : JSON.stringify(edit.newValue);
           }
         } else {
-          // currentValue = inputValues[key] || extractPlainText(edit.newValue);
           currentValue = inputValues[key] !== undefined ? inputValues[key] : extractPlainText(edit.newValue);
         }
 
@@ -470,12 +468,10 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
                   animationKey: `new-item-${Date.now()}`,
                 },
               });
-              // console.log('🆕 addBlockItem response:', addResponse);
 
               itemIdToUse = addResponse.data.addBlockItem.itemId;
 
               if (!itemIdToUse) {
-                // console.log('❌ Failed to retrieve new itemId after creation.');
                 continue;
               }
               setCreatedItem(key, itemIdToUse);
@@ -491,7 +487,6 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
           let valuesToStore = {};
 
           if (typeof edit.newValue === 'object' && edit.newValue !== null) {
-            // Use the user-edited object directly if available
             const editedObj = inputValues[key];
             valuesToStore = typeof editedObj === 'object' ? editedObj : edit.newValue;
           } else {
@@ -508,7 +503,6 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
             if (typeof value === 'object' && !Array.isArray(value)) {
               finalValue = value;
             }
-            // console.log('finalValue', finalValue);
             try {
               await updateBlockItemField({
                 variables: {
@@ -524,14 +518,12 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
             } catch (updateError) {
               console.error('❌ Error updating field:', fieldKey, updateError);
               if (updateError.message.includes('Block item ID not found')) {
-                // console.log('🧹 Clearing cache for not found item');
                 setCreatedItem(key, null);
               }
             }
           }
         } else {
           updateBlockItemLocal(edit.blockId, edit.itemId, edit.field, currentValue);
-          // console.log('goes inside');
 
           await updateBlockItemField({
             variables: {
@@ -550,7 +542,6 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
           });
           hasChanges = true;
         }
-        // console.log('✅ Marking as applied after API call:', key);
         baselineValuesRef.current[key] = currentValue;
         setAppliedItem(key, true);
       }
@@ -559,7 +550,6 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
       } else {
         console.log('ℹ️ No API calls needed - items already applied');
       }
-      // console.log('✅ All changes applied successfully!');
       setAllCheckedItems({});
 
       if (onResumeUpdate && hasChanges) {
@@ -573,14 +563,12 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
       }
     } catch (error) {
       console.error('❌ Error updating resume:', error);
-      // FIX: Enhanced error handling
       if (error.message.includes('Block item ID not found')) {
         const match = error.message.match(/Block item ID not found: ([a-f0-9-]+)/);
         if (match) {
           const problematicItemId = match[1];
           console.log(`🔧 Clearing cache for problematic item: ${problematicItemId}`);
 
-          // Clear the specific problematic item from cache
           Object.entries(createdItems).forEach(([cacheKey, cachedItemId]) => {
             if (cachedItemId === problematicItemId) {
               setCreatedItem(cacheKey, null);
@@ -718,7 +706,7 @@ const AIReviewSection = ({ resumeId, token, onUpdateComplete, onRefreshRef, onRe
                         disabled={isChildDisabled}
                         style={{
                           opacity: isChildDisabled ? 0.5 : 1,
-                          cursor: isChildDisabled ? 'not-allowed' : 'pointer',
+                          cursor: isChildDisabled ? 'default' : 'pointer',
                         }}
                       >
                         {isChildSelected ? 'x' : '+'}
@@ -864,7 +852,7 @@ const ToggleButton = styled.button`
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer; 
+  cursor: pointer;
   transition: all 0.2s ease-in-out;
 
   &:hover {
@@ -1114,3 +1102,4 @@ const ErrorText = styled.p`
 const NoDataText = styled.p`
   text-align: center;
 `;
+
