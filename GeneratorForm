@@ -1,0 +1,1133 @@
+
+GeneratorForm.js
+// experiment purpose only
+import { Experiment as MarvelExperiment, Variant as MarvelVariant } from '@marvelapp/react-ab-test';
+import marvelEmitter from '@marvelapp/react-ab-test/lib/emitter';
+import { reviewClients } from '/imports/checkout/api/helpers';
+import { withAccount } from '/imports/core/api/accounts/accountContext';
+import { BLUEPILL_HOSTS } from 'imports/core/api/constants';
+import { PencilIcon } from 'imports/core/ui/assets';
+import SvgIcon from 'imports/core/ui/atoms/SvgIcon';
+import { getCustomTitle, setDefaultValueSABudapest } from 'imports/generator/api/helpers';
+import AutoApplyModal from 'imports/generator/ui/components/AutoApplyModal';
+import ControlsModal from 'imports/generator/ui/components/ControlsModal';
+import MissingSkillsModal from 'imports/generator/ui/components/MissingSkillsModal';
+import sortBy from 'lodash/sortBy';
+import { withRouter } from 'next/router';
+import nookies from 'nookies';
+import PropTypes from 'prop-types';
+import qs from 'qs';
+import { Component, Fragment } from 'react';
+import { graphql } from 'react-apollo';
+import { ValidatorForm } from 'react-form-validator-core';
+import styled, { css } from 'styled-components';
+import AddBlocks from '/imports/generator/ui/components/Header';
+import ColorSelect from './ColorSelect';
+import GenericBlock from './GenericBlock';
+import ResumeSettingsDropdown from './ResumeSettingsDropdown';
+import { Push } from '/components/Link';
+import env from '/env';
+import { withGeneralContext } from '/imports/core/api/generalContext';
+import { withResponsiveContext } from '/imports/core/api/responsiveContext';
+import { withIntl } from '/imports/core/api/useIntl';
+import Box from '/imports/core/ui/atoms/Box';
+import Button from '/imports/core/ui/atoms/Button';
+import EditableTitleAtom from '/imports/core/ui/atoms/EditableTitle';
+import Flex from '/imports/core/ui/atoms/Flex';
+import Label from '/imports/core/ui/atoms/Label';
+import { blockDetailImmutableUpdate } from '/imports/generator/api/apollo/client/helpers';
+import { UPDATE_RESUME_DETAIL } from '/imports/generator/api/apollo/client/mutations';
+import { TEMPLATES } from '/imports/generator/api/constants';
+import { EXPOSED_DETAILS_MAP } from '/imports/generator/api/form';
+import { Arrow, CancelRoundIcon, FormattingIcon, PersonalInfoIcon } from '/imports/generator/ui/assets';
+import BlockTitleAtom from '/imports/generator/ui/atoms/BlockTitle';
+import FieldLabel from '/imports/generator/ui/atoms/FieldLabel';
+import FontSelector from '/imports/generator/ui/atoms/FontSelector';
+import LanguageSelector from '/imports/generator/ui/atoms/LanguageSelector';
+import TemplateSelectorDropdown from '/imports/generator/ui/atoms/TemplateSelectorDropdown';
+import { FlexWrapper, mobileElement } from '/imports/generator/ui/components/BlockItemMobileControls';
+import TranslateResumeCTA from '/imports/generator/ui/components/translateResume/TranslateResume';
+import { SA_RESUME_LEFT_BAR_OPTIONS, SA_RESUME_SETTINGS, SA_RESUME_SETTINGS_V2 } from '/imports/pdf/core/api/constants';
+import {
+  HIDE_RENAME_BLOCK_TITLE_TEMPLATE,
+  isPaidUser,
+  NOT_SHOW_OSLO_EXP_FINISH_LOCALE,
+  removeExperiment,
+} from '/lib/helpers';
+import { apolloClient as client } from '/lib/initApollo';
+import { getTemplateFonts } from '/styles/pdf-fonts/helpers';
+import { useFormContext } from 'react-hook-form';
+
+const templateOptions = TEMPLATES.map(({ name: title, id: value, role, displayCondition }) => ({
+  title,
+  value,
+  role,
+  displayCondition,
+})).filter((data) => !['lima', 'cali'].includes(data.value));
+
+@withIntl
+@withGeneralContext
+@withResponsiveContext
+@withAccount
+@withRouter
+@graphql(UPDATE_RESUME_DETAIL, { name: 'updateResumeDetail' })
+class GeneratorForm extends Component {
+  static propTypes = {
+    mutate: PropTypes.func,
+    resume: PropTypes.object,
+    currentUser: PropTypes.object,
+    $noPadding: PropTypes.bool,
+    trackEvent: PropTypes.func,
+    updateKey: PropTypes.bool,
+    forceUpdateKey: PropTypes.bool,
+    onForceUpdate: PropTypes.func,
+  };
+
+  state = {
+    loading: false,
+    clientLoading: false,
+    openPopupSkills: false,
+    templateOptions: templateOptions,
+    modalOpened: false,
+    titleEditMode: false,
+    // button
+    // firstNameInput: '',
+  };
+
+  addKeyToEvenBlocks = (value) => {
+    const { resume, updateImmue } = this.props;
+
+    if (!resume || !resume.blocks) return;
+
+    const updatedBlocks = resume.blocks.map((block) => {
+      return {
+        ...block,
+        items: block.items
+          ? block.items.map((item, itemIndex) => {
+              if (itemIndex % 2 === 0) {
+                return {
+                  ...item,
+                  isKey: value,
+                };
+              }
+              return item;
+            })
+          : [],
+      };
+    });
+
+    const updatedResume = {
+      ...resume,
+      blocks: updatedBlocks,
+    };
+
+    updateImmue(updatedResume);
+  };
+
+  closePopupSkills = () => {
+    this.setState({ openPopupSkills: false });
+  };
+
+  updateSaDetails = () => {
+    const {
+      resume,
+      updateResumeDetail,
+      resume: { settings },
+    } = this.props;
+    setDefaultValueSABudapest(resume, updateResumeDetail, settings?.templateVersion);
+  };
+
+  componentDidUpdate(prevProps) {
+    console.log('🔄 GeneratorForm componentDidUpdate');
+    // console.log('prevProps', prevProps);
+    // console.log('🔍 ALL PROPS in componentDidUpdate:', Object.keys(this.props));
+    console.log('   Previous updateKey:', prevProps.forceUpdateKey);
+    console.log('   Current updateKey:', this.props.forceUpdateKey);
+    // console.log('   Previous resume data:', prevProps.resume?.details?.firstName);
+    // console.log('   Current resume data:', this.props.resume?.details?.firstName);
+
+    if (prevProps.forceUpdateKey !== this.props.forceUpdateKey) {
+      console.log('🎯 updateKey changed - forcing re-render');
+      // Force a re-render by setting state
+      this.forceUpdate();
+    }
+    if (prevProps.resume !== this.props.resume) {
+      console.log('📝 Resume data prop changed');
+    }
+  }
+
+  componentDidMount() {
+    // console.log('✅ GeneratorForm mounted with updateKey:', this.props.updateKey);
+    const {
+      resume: { settings },
+      resume,
+      currentUser,
+      isMobile,
+    } = this.props;
+    const { agent_client_id } = nookies.get({});
+    const activeBruneiExp = marvelEmitter.getActiveVariant('exp_new_template') === 'with_brunei';
+    const showOslo =
+      marvelEmitter.getActiveVariant('exp_oslo_option') === 'with_oslo' ||
+      (!isMobile && !NOT_SHOW_OSLO_EXP_FINISH_LOCALE.includes(this.props.locale));
+
+    // experiment purpose only
+    // const activeVariant = marvelEmitter.getActiveVariant('exp_even_items_key');
+    // console.log('-------------Even items key experiment variant:::::::::::::', activeVariant);
+
+    const isAgentOrAdmin =
+      (currentUser && (currentUser.role === 'agent' || currentUser.role === 'admin')) ||
+      (agent_client_id !== undefined && agent_client_id !== null);
+    if (resume && settings?.template === 'budapest' && [3, 4, '3', '4'].includes(settings?.templateVersion))
+      this.updateSaDetails();
+
+    removeExperiment('exp_arabic_font');
+    removeExperiment('exp_translate_resume_processing_behavior');
+    const urlParams = new URLSearchParams(window.location.search);
+    const bucketId = urlParams.get('bucketId');
+    this.setState({
+      openPopupSkills: !!bucketId,
+    });
+
+    if (agent_client_id !== undefined && agent_client_id !== null) {
+      this.setState({ templateOptions: templateOptions });
+    } else {
+      this.setState({
+        templateOptions: templateOptions?.filter((t) => {
+          if (t?.role) {
+            return t?.role?.includes(this.props?.currentUser?.role);
+          }
+          if (t?.displayCondition && typeof t.displayCondition == 'function') {
+            return t?.displayCondition(
+              this.props.locale,
+              activeBruneiExp,
+              isMobile,
+              !isMobile,
+              isAgentOrAdmin,
+              showOslo,
+            );
+          }
+          return true;
+        }),
+      });
+    }
+  }
+
+  shouldComponentUpdate() {
+    // Blocking the updates when the user is typing, in order to avoid typing lag
+    return !window.isTyping;
+  }
+
+  componentWillUnmount() {
+    client.writeData({
+      data: {
+        expandedItem: '',
+      },
+    });
+  }
+
+  updateTitle = (value) => {
+    const {
+      resume: { id: docId },
+      updateResumeDetail,
+    } = this.props;
+
+    updateResumeDetail({
+      variables: {
+        docId,
+        path: 'name',
+        value,
+      },
+    });
+  };
+
+  updateSectionTitle = (value) => {
+    const {
+      resume: { id: docId },
+      updateResumeDetail,
+      updateImmue,
+    } = this.props;
+    blockDetailImmutableUpdate(updateImmue)(docId, 'details.sectionTitle')(value);
+    updateResumeDetail({
+      variables: {
+        docId,
+        path: 'details.sectionTitle',
+        value,
+      },
+    });
+  };
+
+  filterTemplateOptionsByRole = (options) => {
+    const { agent_client_id } = nookies.get({});
+    const { currentUser } = this.props;
+    const isAgentOrAdmin = currentUser && (currentUser.role === 'agent' || currentUser.role === 'admin');
+    if ((agent_client_id !== undefined && agent_client_id !== null) || isAgentOrAdmin) {
+      return options;
+    } else {
+      return options.filter(
+        (option) => (option.value !== 'atsresume' || option.title === 'Tokyo') && option.value !== 'budapest-v2',
+      );
+    }
+  };
+
+  renderTemplateControls = () => {
+    const {
+      resume,
+      resume: { id, settings },
+      t,
+      updateImmue,
+      currentUser,
+      locale,
+    } = this.props;
+    const { agent_client_id } = nookies.get({});
+    const isArabicLanguage = locale === 'ar';
+    const { headingFont, contentFont, arabicContentFont, arabicHeadingFont } = getTemplateFonts(
+      isArabicLanguage,
+      settings.template,
+      settings.headingFont,
+      settings.contentFont,
+      settings.arabicHeadingFont,
+      settings.arabicContentFont,
+    );
+    const showArabicFontSelector = false;
+    const filteredTemplateOptions = this.filterTemplateOptionsByRole(templateOptions);
+    const isAgentOrAdmin =
+      (currentUser && (currentUser.role === 'agent' || currentUser.role === 'admin')) ||
+      (agent_client_id !== undefined && agent_client_id !== null);
+
+    const withTranslateButton = locale === 'en' || isPaidUser(currentUser?.role);
+    const showSAResumeSettings =
+      settings?.template === 'budapest' && [3, 4, '3', '4'].includes(settings?.templateVersion);
+
+    const isTemplateVersion3 = settings?.template === 'budapest' && settings?.templateVersion == 3;
+    const isTemplateVersion4 = settings?.template === 'budapest' && settings?.templateVersion == 4;
+    const translationNewDesign = locale === 'en';
+    // marvelEmitter.getActiveVariant('exp_arabic_font') === 'with_arabic_font' &&
+    // (settings?.language === 'ar' || hasArabicDescription(resume));
+
+    const withArabicExtraFonts = isArabicLanguage && settings.language === 'ar';
+    const arabicFontProps = withArabicExtraFonts
+      ? {
+          withArabicExtraFonts,
+          language: 'arabic',
+        }
+      : {};
+    return (
+      <Fragment>
+        <FormattingHeader language={settings.language}>
+          <IconWrappper>
+            <FormattingIcon />
+          </IconWrappper>
+          {t('generator.final.resume_formatting')}
+        </FormattingHeader>
+        <FlexControls grid isSABudapest={isTemplateVersion4}>
+          <FormBox md={6} sm={6} xs={12} padded>
+            <TemplateSelectorDropdown
+              stripe
+              needUpdate
+              options={this.state.templateOptions}
+              source={resume}
+              updateImmue={updateImmue}
+            />
+          </FormBox>
+          <FormBox md={6} sm={6} xs={12} padded>
+            <ColorSelectorLabel htmlFor="generator-settings__accent_color" language={settings.language} form={1}>
+              {t('generator.settings.accent_color')}
+            </ColorSelectorLabel>
+            <ColorSelect
+              componentId="generator-settings__accent_color"
+              selected={settings.color}
+              id={id}
+              template={settings.template}
+              updateImmue={updateImmue}
+              ismargin={true}
+            />
+          </FormBox>
+          <FormBox md={6} sm={6} xs={12} padded>
+            <FontSelector
+              path="headingFont"
+              font={headingFont}
+              source={resume}
+              updateImmue={updateImmue}
+              {...(showArabicFontSelector && { language: 'latin' })}
+              {...arabicFontProps}
+            />
+          </FormBox>
+          <FormBox md={6} sm={6} xs={12} padded>
+            <FontSelector
+              path="contentFont"
+              font={contentFont}
+              source={resume}
+              updateImmue={updateImmue}
+              {...(showArabicFontSelector && { language: 'latin' })}
+              {...arabicFontProps}
+            />
+          </FormBox>
+          {showArabicFontSelector && (
+            <>
+              <FormBox md={6} sm={6} xs={12} padded>
+                <FontSelector
+                  path="arabicHeadingFont"
+                  font={arabicHeadingFont}
+                  source={resume}
+                  updateImmue={updateImmue}
+                  language={'arabic'}
+                />
+              </FormBox>
+              <FormBox md={6} sm={6} xs={12} padded>
+                <FontSelector
+                  path="arabicContentFont"
+                  font={arabicContentFont}
+                  source={resume}
+                  updateImmue={updateImmue}
+                  language={'arabic'}
+                />
+              </FormBox>
+            </>
+          )}
+          <FormBox md={6} sm={6} xs={12} padded>
+            <LanguageSelector source={resume} updateImmue={updateImmue} />
+          </FormBox>
+          {showSAResumeSettings &&
+            isTemplateVersion3 &&
+            isAgentOrAdmin &&
+            Object.keys(SA_RESUME_SETTINGS).map((setting) => (
+              <FormBox md={6} sm={6} xs={12} padded key={setting}>
+                <ResumeSettingsDropdown path={setting} source={resume} updateImmue={updateImmue} />
+              </FormBox>
+            ))}
+        </FlexControls>
+        {showSAResumeSettings && !isTemplateVersion3 && isAgentOrAdmin && (
+          <Fragment>
+            <BlockTitle isSABudapest>{t('generator.resume.settings.style')}</BlockTitle>
+            <FlexControls grid isSABudapest={isTemplateVersion4}>
+              {Object.keys(SA_RESUME_SETTINGS_V2).map((setting) => (
+                <FormBox md={6} padded key={setting}>
+                  <ResumeSettingsDropdown path={setting} source={resume} updateImmue={updateImmue} />
+                </FormBox>
+              ))}
+            </FlexControls>
+            <BlockTitle isSABudapest>{t('generator.resume.settings.left_bar')}</BlockTitle>
+            <FlexControls grid>
+              {Object.keys(SA_RESUME_LEFT_BAR_OPTIONS).map((setting) => (
+                <FormBox md={6} padded key={setting}>
+                  <ResumeSettingsDropdown path={setting} source={resume} updateImmue={updateImmue} />
+                </FormBox>
+              ))}
+            </FlexControls>
+          </Fragment>
+        )}
+      </Fragment>
+    );
+  };
+
+  toggleModal = () => {
+    this.setState({ modalOpened: !this.state.modalOpened });
+  };
+
+  toggleEditMode = () => {
+    this.setState({ titleEditMode: !this.state.titleEditMode });
+    if (this.state.titleEditMode) {
+      this.toggleModal();
+    }
+  };
+
+  renderTitleControls = (isMobile, showControl) => {
+    if (!showControl) return null;
+    const block = { type: 'PERSONAL_INFORMATION' };
+    const { t } = this.props;
+    if (isMobile) {
+      return (
+        <BlockControlsCont isMobile>
+          <ButtonEditTitle onClick={this.toggleModal}>
+            <SvgIcon.More width="19px" height="6px" viewBox="0 0 17 4" />
+          </ButtonEditTitle>
+          <ControlsModal onClose={this.toggleModal} noCancel openStateBase open={this.state.modalOpened}>
+            <FlexWrapper>
+              {mobileElement(<PencilIcon width="24" height="24" />, t('edit'), this.toggleEditMode)}
+              {mobileElement(<CancelRoundIcon />, t('cancel'), this.toggleModal ? this.toggleModal : null)}
+            </FlexWrapper>
+          </ControlsModal>
+        </BlockControlsCont>
+      );
+    }
+    return (
+      <BlockControlsCont>
+        <ButtonEditTitle
+          showControl
+          edit
+          isRenameSectionTitle={showControl}
+          unstyled
+          onClick={this.toggleEditMode}
+          data-is-editing={this.state.titleEditMode}
+          id={`custom-title-edit-${block.type}`}
+        >
+          <PencilIcon />
+        </ButtonEditTitle>
+      </BlockControlsCont>
+    );
+  };
+
+  renderExposedForm = () => {
+    const {
+      resume: { id, details, settings, blocks },
+      t,
+      locale,
+      updateImmue,
+      isMobile,
+      trackEvent,
+    } = this.props;
+    const isStopEdit = HIDE_RENAME_BLOCK_TITLE_TEMPLATE?.some(
+      ({ template, section }) => template.includes(settings?.template) && section.includes('PERSONAL_INFORMATION'),
+    );
+
+    const isRenameSectionTitle = !isStopEdit && !isMobile;
+    const customTitle = getCustomTitle(
+      'PERSONAL_INFORMATION',
+      details.sectionTitle,
+      t('generator.final.personal_information'),
+      isRenameSectionTitle,
+    );
+    const personalInformationTitle =
+      isRenameSectionTitle && details.sectionTitle ? customTitle : t('generator.final.personal_information');
+
+    return (
+      <Fragment>
+        <ValidatorForm onSubmit={() => {}}>
+          <BlockTitle language={settings.language} isRenameSectionTitle={isRenameSectionTitle}>
+            <IconWrappper isRenameSectionTitle={isRenameSectionTitle}>
+              <PersonalInfoIcon />
+            </IconWrappper>
+            {!isRenameSectionTitle ? (
+              personalInformationTitle
+            ) : (
+              <EditableTitleAtom
+                controlled
+                onSave={this.updateSectionTitle}
+                toggleEditable={this.toggleEditMode}
+                editable={this.state.titleEditMode}
+                defaultvalue={personalInformationTitle}
+                isCustomSection={false}
+                isRenameSectionTitle={isRenameSectionTitle}
+                type={`PERSONAL_INFORMATION`}
+                inputId="personal-information-input"
+                trackEvent={trackEvent}
+              />
+            )}{' '}
+            {!this.state.titleEditMode && this.renderTitleControls(isMobile, isRenameSectionTitle)}
+          </BlockTitle>
+          <StyledFlex grid id="personal-information">
+            {EXPOSED_DETAILS_MAP(locale).map((d, i) => {
+              const FormComponent = d.component;
+              let props = d.props || {};
+              const path = `details.${d.name}`;
+              const gridWidth = d.fullWidth ? 12 : 6;
+              const xsGridWidth = d.xsFullWidth ? 12 : gridWidth;
+              if (props.errorMessages && props.errorMessages.length) {
+                const errorMessages = props.errorMessages.map((errorMessage) => t(errorMessage));
+                props = { ...props, errorMessages };
+              }
+
+              return [
+                <FormBox
+                  language={settings.language}
+                  md={gridWidth}
+                  sm={gridWidth}
+                  xs={xsGridWidth}
+                  padded
+                  first={i === 0}
+                  key={`exposed-${name}-${i}`}
+                  isFormBox
+                >
+                  {d.label && (
+                    <FieldLabel
+                      exposed
+                      label={t(d.translationSlug)}
+                      tip={d.tip}
+                      zIndex={d.increasedZindex}
+                      htmlFor={`input-${d.name}-${i}`}
+                      id={`label-${d.name}-${i}`}
+                    />
+                  )}
+                  <FormComponent
+                    type="text"
+                    view="finish"
+                    mutation={UPDATE_RESUME_DETAIL}
+                    name={d.name}
+                    docType="resume"
+                    variables={{
+                      docId: id,
+                      path,
+                    }}
+                    value={details[d.name]}
+                    template={settings.template}
+                    optimisticResponse={blockDetailImmutableUpdate(updateImmue)(id, path)}
+                    lang={settings.language}
+                    details={details}
+                    resume={this.props.resume}
+                    id={`input-${d.name}-${i}`}
+                    ariaLabelledBy={`label-${d.name}-${i}`}
+                    describedBy={`label-${d.name}-${i}`}
+                    ariaLabel={t(d.translationSlug)}
+                    {...props}
+                  />
+                </FormBox>,
+              ];
+            })}
+          </StyledFlex>
+        </ValidatorForm>
+      </Fragment>
+    );
+  };
+
+  renderBlocks = () => {
+    const {
+      resume,
+      resume: {
+        blocks,
+        settings: { template },
+        settings,
+      },
+      referenceResume,
+      updateImmue,
+    } = this.props;
+
+    const fixedBlocks = sortBy(
+      blocks.filter((b) => b.fixedPosition),
+      'fixedPosition',
+    );
+    const sortableBlocks = sortBy(
+      blocks.filter((b) => !b.fixedPosition),
+      [(item) => item.position[0], (item) => item.position[1]],
+    );
+
+    const sortedBlocks = [...fixedBlocks, ...sortableBlocks];
+
+    const referenceBlocks = referenceResume ? referenceResume.blocks : [];
+
+    const fixedReferenceBlocks = sortBy(
+      referenceBlocks.filter((b) => b.fixedPosition),
+      'fixedPosition',
+    );
+    const sortableReferenceBlocks = sortBy(
+      referenceBlocks.filter((b) => !b.fixedPosition),
+      [(item) => item.position[0], (item) => item.position[1]],
+    );
+    const sortedReferenceBlocks = [...fixedReferenceBlocks, ...sortableReferenceBlocks];
+    return (
+      <Fragment>
+        {sortedBlocks.map((block, key) => {
+          const isStopEdit = HIDE_RENAME_BLOCK_TITLE_TEMPLATE?.some(
+            ({ template, section }) => template.includes(settings?.template) && section.includes(block.type),
+          );
+          return (
+            <GenericBlock
+              key={block.animationKey}
+              block={block}
+              resumeId={resume.id}
+              refernceBlock={sortedReferenceBlocks[key]}
+              referenceResume={referenceResume}
+              orderedLength={sortableBlocks.length}
+              source={resume}
+              updateImmue={updateImmue}
+              isStopEdit={isStopEdit}
+            />
+          );
+        })}
+      </Fragment>
+    );
+  };
+
+  renderAddBlocks = () => {
+    const { resume, t, updateImmue } = this.props;
+    return (
+      <AddBlocksCont>
+        <BlockTitle>{t('generator.final.add_blocks')}</BlockTitle>
+        <AddBlocks resume={resume} updateImmue={updateImmue} />
+      </AddBlocksCont>
+    );
+  };
+
+  goTo = async () => {
+    this.setState({
+      loading: true,
+    });
+    const { resume, locale, currentUser, host } = this.props;
+    const { token } = nookies.get({});
+    const data = {
+      resumeId: resume.id,
+      step: 'preview',
+      userId: currentUser?.id,
+    };
+    const path = BLUEPILL_HOSTS.includes(host) ? '/auto-apply' : `/resume?${qs.stringify(data)}`;
+    const asPath = BLUEPILL_HOSTS.includes(host)
+      ? '/auto-apply'
+      : `/resume/${resume.id}/preview?userId=${currentUser?.id}`;
+    Push(path, locale, asPath);
+    this.setState({
+      loading: false,
+    });
+  };
+
+  handleAutoOnboard = async () => {
+    const { locale, currentUser, resume } = this.props;
+    const { token } = nookies.get({});
+    this.setState({
+      clientLoading: true,
+    });
+    const reviewClientPayload = {
+      lang: locale,
+      resumeUrl: `https://resumedone.co/user-resume/${currentUser.id}/${resume?.id}`,
+      resumeWriting: true,
+      resumeReview: false,
+      userId: currentUser?.id,
+      isTestEnv: env.NODE_ENV === 'production' ? false : true,
+      planCurrency: 'EUR',
+      planAmount: '59',
+      leadLanguage: locale,
+      resumeLanguage: resume?.settings?.language,
+    };
+    const resp = await reviewClients(reviewClientPayload);
+    if (resp) {
+      Push(`/job-review/welcome?userId=${currentUser?.id}`, locale);
+    }
+    this.setState({
+      clientLoading: false,
+    });
+  };
+
+  // button
+  // handleFirstNameInputChange = (e) => {
+  //   this.setState({ firstNameInput: e.target.value });
+  // };
+
+  // button
+  // updateFirstName = () => {
+  //   const { firstNameInput } = this.state;
+  //   const {
+  //     resume: { id: docId },
+  //     updateResumeDetail,
+  //     updateImmue,
+  //   } = this.props;
+
+  //   if (firstNameInput.trim()) {
+  //     // Update the firstName field in resume details
+  //     const path = 'details.firstName';
+
+  //     // Update the local state immediately for better UX
+  //     blockDetailImmutableUpdate(updateImmue)(docId, path)(firstNameInput);
+
+  //     // Update in the database
+  //     updateResumeDetail({
+  //       variables: {
+  //         docId,
+  //         path,
+  //         value: firstNameInput,
+  //       },
+  //     });
+
+  //     // Clear the input after update
+  //     this.setState({ firstNameInput: ''});
+  //     // console.log('UPDATE ---------------------details---:', this.props.resume.details);
+  //   }
+  // };
+
+  render() {
+    const { resume, $noPadding, t, breakpoint, host, updateImmue, router } = this.props;
+    const { loading, clientLoading } = this.state;
+    const nextToDownload = BLUEPILL_HOSTS.includes(host) ? t('start_applying_automatically') : t('next_to_download');
+    const ShowPopUpSkills =
+      marvelEmitter.getActiveVariant('exp_scoring_plugin_v2') != 'without_popup_with_plugin' &&
+      router.query?.adaptedResume !== 'true';
+    const isProd = env.NODE_ENV === 'production';
+    const showAutoApplyModal = BLUEPILL_HOSTS.includes(host);
+    const isAdaptedResume = router.query?.adaptedResume == 'true';
+    return (
+      <FormWrap $noPadding={$noPadding}>
+        <Form $noPadding={$noPadding}>
+          <TitleCont>
+            <EditableTitle onSave={this.updateTitle} defaultvalue={resume.name} contentEditableDisplay />
+          </TitleCont>
+          {this.renderTemplateControls()}
+
+          {this.renderExposedForm(this.state.isRenameSectionTitle)}
+          {this.renderBlocks()}
+          {this.renderAddBlocks()}
+          <TranslateResumeCTA isNewDesign resume={resume} />
+        </Form>
+        <ButtonWrapper disabled={loading}>
+          <DownloadButton onClick={this.goTo} tabIndex={0} aria-label={nextToDownload} $autoApply={showAutoApplyModal}>
+            {nextToDownload}
+            <Arrow.Right />
+          </DownloadButton>
+        </ButtonWrapper>
+        {ShowPopUpSkills && (
+          <MissingSkillsModal
+            open={this.state.openPopupSkills}
+            onClose={this.closePopupSkills}
+            source={resume}
+            updateImmue={updateImmue}
+          />
+        )}
+        {showAutoApplyModal && <AutoApplyModal />}
+      </FormWrap>
+    );
+  }
+}
+
+GeneratorForm.displayName = 'GeneratorForm';
+
+const ButtonWrapper = styled.div`
+  padding-top: 0;
+  padding-bottom: 50px;
+  ${({ theme: { isRTL } }) =>
+    isRTL &&
+    css`
+      width: 100%;
+      display: flex;
+      justify-content: flex-end;
+    `}
+  ${({ theme }) =>
+    theme.max('xs')`
+    margin: 16px 0 0 0;
+    padding: 0 5px;
+`}
+${({ disabled }) =>
+    disabled &&
+    css`
+      pointer-events: none;
+    `}
+`;
+
+const BlockTitle = styled(BlockTitleAtom)`
+  display: flex;
+  font-size: 18px;
+  line-height: normal;
+  letter-spacing: normal;
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+  ${({ isRenameSectionTitle }) =>
+    isRenameSectionTitle &&
+    css`
+      align-items: center;
+      &:hover {
+        svg {
+          opacity: 1;
+        }
+      }
+    `}
+
+  ${({ isSABudapest }) =>
+    isSABudapest &&
+    css`
+      margin-top: 0px;
+      padding-left: 18px;
+      margin-bottom: 30px;
+    `}
+`;
+
+const StyledFlex = styled(Flex)`
+  ${({ theme }) =>
+    theme.max('xs')`
+    margin: 0;
+  `}
+`;
+
+const TitleCont = styled.div`
+  margin-top: 10px;
+  margin-bottom: 15px;
+  ${(p) => p.theme.max('sm')`
+    margin-top: 0;
+  `}
+  ${(p) => p.theme.max('md')`
+    margin-bottom: 10px;
+  `}
+  ${({ theme }) =>
+    theme.max('xs')`
+    padding: 0 5px;
+  `}
+`;
+
+const EditableTitle = styled(EditableTitleAtom)`
+  padding-left: 0;
+  font-size: 26px;
+  height: 32px;
+  text-transform: capitalize;
+`;
+
+const FormWrap = styled.div`
+  flex: 1;
+  max-width: 860px;
+  height: 100%;
+  margin: auto;
+  padding-top: 15px;
+`;
+
+const AddBlocksCont = styled.div`
+  margin-top: 40px;
+  ${({ theme }) =>
+    theme.max('xs')`
+    padding: 0 5px;
+  `}
+`;
+
+const Form = styled.div`
+  ${(p) =>
+    !p.$noPadding &&
+    css`
+      padding: 48px 48px;
+      ${(p) => p.theme.max('sm')`
+      padding: 20px;
+    `};
+    `}
+  ${({ theme: { isRTL } }) =>
+    isRTL &&
+    css`
+      direction: rtl;
+    `}
+`;
+
+const FormBox = styled(Box)`
+  min-height: 70px;
+  margin-bottom: 24px;
+  position: relative;
+  ${({ first }) =>
+    first &&
+    css`
+      margin-top: 15px;
+    `}
+
+  ${({ marginTop }) =>
+    marginTop &&
+    css`
+      margin-top: 5px;
+    `}
+
+  ${({ theme }) =>
+    theme.max('xs')`
+    min-height:inherit;
+    padding: 0 5px;
+    &:last-child {
+      margin-bottom: 5px;
+    }
+  `}
+`;
+
+const FlexControls = styled((p) => <Flex {...p} />)`
+  ${({ isSABudapest }) =>
+    !isSABudapest &&
+    css`
+      margin-bottom: 40px;
+    `}
+  ${({ theme }) =>
+    theme.max('xs')`
+        margin: 0;
+  `}
+`;
+
+const downloadButton = css`
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  max-width: 250px;
+  background-color: #1688fe;
+  border-radius: 3px;
+  border: 1px solid #429ff0;
+  padding: 12px 20px;
+  font-family: ${({ theme }) => theme.font.family.websiteBold};
+  font-size: 16px;
+  float: right;
+  margin-top: 38px;
+
+  span {
+    position: unset;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-left: ${({ theme: { isRTL } }) => (isRTL ? '0' : '11px')};
+    margin-right: ${({ theme: { isRTL } }) => (isRTL ? '11px' : 'unset')};
+    margin-top: 0;
+    transform: ${({ theme: { isRTL } }) => (isRTL ? 'rotate(180deg)' : 'unset')};
+  }
+`;
+
+const DownloadButton = styled(Button)`
+  ${downloadButton}
+  ${({ $autoApply }) =>
+    $autoApply &&
+    css`
+      max-width: unset !important;
+    `}
+  ${({ theme: { max, isRTL } }) => css`
+    ${max('xs')`
+      max-width: 100%;
+      width: 100%;
+      justify-content: left;
+      border-color: transparent;
+      margin: 0;
+      span {
+        margin-left: auto;
+        margin-right: -5px;
+      }
+      ${
+        isRTL &&
+        css`
+          span {
+            transform: rotate(180deg);
+            margin-left: 0;
+            margin-right: auto;
+          }
+        `
+      }
+    `}
+  `}
+  ${({ autoOnboarding }) =>
+    autoOnboarding &&
+    css`
+      margin-right: 15px;
+    `}
+`;
+
+const ColorSelectorLabel = styled(Label)`
+  text-transform: uppercase;
+  font-size: 11px;
+  margin-bottom: 0;
+  line-height: normal;
+  letter-spacing: 0.2px;
+  font-family: ${({ theme }) => theme.font.family.websiteSemiBold};
+  color: #46466b;
+  position: absolute;
+  top: -5px;
+
+  @media (max-width: 449px) {
+    text-indent: 20px;
+    position: unset;
+    top: unset;
+  }
+`;
+
+const IconWrappper = styled.div`
+  color: #1688fe;
+  margin-right: 10px;
+  ${({ theme }) =>
+    theme.max('xs')`
+    padding: 0 5px;
+  `}
+  ${({ isRenameSectionTitle }) =>
+    isRenameSectionTitle &&
+    css`
+      display: flex;
+      align-items: center;
+    `}
+  ${({ theme: { isRTL } }) =>
+    isRTL &&
+    css`
+      margin-right: 0;
+      margin-left: 10px;
+    `}
+`;
+
+const FormattingHeader = styled(BlockTitle)`
+  margin-bottom: 20px;
+`;
+
+const BlockControlsCont = styled.div`
+  margin-left: 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  ${({ isMobile }) =>
+    isMobile &&
+    css`
+      margin-left: 10px;
+    `}
+
+  > div {
+    font-size: 1.15em;
+    color: ${(p) => p.theme.colors.gray.light};
+  }
+`;
+
+const ButtonEditTitle = styled.div`
+  display: flex;
+  cursor: pointer;
+  margin-left: 4px;
+  width: max-content;
+  height: max-content;
+  svg {
+    transform: scale(1.3);
+    :hover {
+      color: #1688fe;
+    }
+  }
+  ${({ edit }) =>
+    edit &&
+    css`
+      svg {
+        fill: #1688fe;
+      }
+
+      &:hover svg path {
+        fill: #1688fe;
+      }
+    `}
+
+  ${({ delete: Delete }) =>
+    Delete &&
+    css`
+      svg:hover rect {
+        fill: #1688fe;
+      }
+    `}
+
+  ${({ strokeHover }) =>
+    strokeHover &&
+    css`
+      svg {
+        path {
+          stroke: rgb(191, 197, 214);
+        }
+      }
+
+      :hover svg path,
+      :hover svg rect {
+        stroke: #1688fe;
+      }
+    `}
+  ${({ isRenameSectionTitle }) =>
+    isRenameSectionTitle &&
+    css`
+      svg {
+        opacity: 0;
+        fill: #bfc5d6;
+      }
+      &:hover svg {
+        opacity: 1;
+        path {
+          fill: #1688fe;
+        }
+      }
+    `}
+
+  ${({ theme: { isRTL } }) =>
+    isRTL &&
+    css`
+      svg {
+        margin-left: 0 !important;
+        margin-right: 10px;
+      }
+    `}
+`;
+
+const ButtonEditTitleMobile = styled.div`
+  position: relative;
+  width: 25px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  svg {
+    transform: scale(1.3);
+  }
+`;
+
+export default GeneratorForm;
+
