@@ -1,0 +1,209 @@
+import { Editor, EditorState, RichUtils, ContentState, convertToRaw, convertFromRaw } from 'draft-js';
+import { useCallback, useMemo, useState } from 'react';
+import styled from 'styled-components';
+
+// List-only block types
+const BLOCK_TYPES = [
+  { label: 'OL', style: 'ordered-list-item', title: 'Ordered list' },
+  { label: 'UL', style: 'unordered-list-item', title: 'Unordered list' },
+];
+
+const ListOnlyEditor = ({ value, onChange }) => {
+  const [editorState, setEditorState] = useState(() => {
+    if (!value) return EditorState.createEmpty();
+
+    try {
+      const content = convertFromRaw(JSON.parse(value));
+      return EditorState.createWithContent(content); // Creates editor state with existing content
+    } catch (error) {
+      return EditorState.createWithContent(ContentState.createFromText(value));
+    }
+  });
+
+  const handleChange = (newEditorState) => {
+    setEditorState(newEditorState);
+
+    // Convert to raw content and call parent's onChange
+    const content = JSON.stringify(convertToRaw(newEditorState.getCurrentContent()));
+    // newEditorState.getCurrentContent() - Gets current content state
+    // convertToRaw() - Converts to plain JavaScript object
+    // JSON.stringify() - Converts object to JSON string
+
+    onChange({ target: { value: content } });
+  };
+
+  const handleKeyCommand = (command) => {
+    if (command === 'split-block') {
+      const selectionState = editorState.getSelection(); // cursor position
+      const contentState = editorState.getCurrentContent(); // all editor content
+      const anchorKey = selectionState.getAnchorKey(); //id
+      const block = contentState.getBlockForKey(anchorKey); // get specific block
+
+      // Handle empty list items - convert back to normal text
+      if (
+        block.getText() === '' &&
+        (block.getType() === 'ordered-list-item' || block.getType() === 'unordered-list-item')
+      ) {
+        const newState = RichUtils.toggleBlockType(editorState, 'unstyled');
+        handleChange(newState);
+        return true;
+      }
+    }
+
+    const newState = RichUtils.handleKeyCommand(editorState, command);
+    if (newState) {
+      handleChange(newState);
+      return true;
+    }
+    return false;
+  };
+
+  const toggleBlockType = (blockType) => {
+    const newState = RichUtils.toggleBlockType(editorState, blockType);
+    handleChange(newState);
+  };
+
+  const selection = editorState.getSelection();
+  const block = editorState.getCurrentContent().getBlockForKey(selection.getStartKey());
+  const blockType = block && block.getType();
+
+  return (
+    <EditorContainer>
+      <StyledEditorWrapper>
+        <StyledEditor
+          editorState={editorState}
+          onChange={handleChange}
+          handleKeyCommand={handleKeyCommand}
+        />
+      </StyledEditorWrapper>
+      <ListControls>
+        {BLOCK_TYPES.map((type) => (
+          <ControlButton
+            key={type.label}
+            active={type.style === blockType}
+            onClick={() => toggleBlockType(type.style)}
+            title={type.title}
+          >
+            {type.label === 'OL' ? (
+              <svg
+                width="24px"
+                height="24px"
+                viewBox="0 0 24 24"
+                version="1.1"
+                xmlns="http://www.w3.org/2000/svg"
+                className="SVG-sc-aabc0362-0 eyAvAa"
+              >
+                <path d="M9,6.2 L9,7.8 C9,7.91045695 9.08954305,8 9.2,8 L19.8,8 C19.9104569,8 20,7.91045695 20,7.8 L20,6.2 C20,6.08954305 19.9104569,6 19.8,6 L9.2,6 C9.08954305,6 9,6.08954305 9,6.2 Z M9.2,18 L19.8,18 C19.9104569,18 20,17.9104569 20,17.8 L20,16.2 C20,16.0895431 19.9104569,16 19.8,16 L9.2,16 C9.08954305,16 9,16.0895431 9,16.2 L9,17.8 C9,17.9104569 9.08954305,18 9.2,18 Z M9.2,13 C9.08954305,13 9,12.9104569 9,12.8 L9,11.2 C9,11.0895431 9.08954305,11 9.2,11 L19.8,11 C19.9104569,11 20,11.0895431 20,11.2 L20,12.8 C20,12.9104569 19.9104569,13 19.8,13 L9.2,13 Z M4,16 L4,15 L7,15 L7,19 L4,19 L4,18 L6,18 L6,17.5 L5,17.5 L5,16.5 L6,16.5 L6,16 L4,16 Z M5,9 L5,6 L4,6 L4,5 L6,5 L6,9 L5,9 Z M4,11 L4,10 L7,10 L7,10.9 L5.2,13 L7,13 L7,14 L4,14 L4,13.1 L5.8,11 L4,11 Z"></path>
+              </svg>
+            ) : (
+              <svg
+                width="24px"
+                height="24px"
+                viewBox="0 0 24 24"
+                version="1.1"
+                xmlns="http://www.w3.org/2000/svg"
+                className="SVG-sc-aabc0362-0 eyAvAa"
+              >
+                <path d="M9,6.7 L9,8.3 C9,8.41045695 9.08954305,8.5 9.2,8.5 L19.8,8.5 C19.9104569,8.5 20,8.41045695 20,8.3 L20,6.7 C20,6.58954305 19.9104569,6.5 19.8,6.5 L9.2,6.5 C9.08954305,6.5 9,6.58954305 9,6.7 Z M9.2,18.5 L19.8,18.5 C19.9104569,18.5 20,18.4104569 20,18.3 L20,16.7 C20,16.5895431 19.9104569,16.5 19.8,16.5 L9.2,16.5 C9.08954305,16.5 9,16.5895431 9,16.7 L9,18.3 C9,18.4104569 9.08954305,18.5 9.2,18.5 Z M9.2,13.5 C9.08954305,13.5 9,13.4104569 9,13.3 L9,11.7 C9,11.5895431 9.08954305,11.5 9.2,11.5 L19.8,11.5 C19.9104569,11.5 20,11.5895431 20,11.7 L20,13.3 C20,13.4104569 19.9104569,13.5 19.8,13.5 L9.2,13.5 Z M5.5,9 C4.67157288,9 4,8.32842712 4,7.5 C4,6.67157288 4.67157288,6 5.5,6 C6.32842712,6 7,6.67157288 7,7.5 C7,8.32842712 6.32842712,9 5.5,9 Z M5.5,14 C4.67157288,14 4,13.3284271 4,12.5 C4,11.6715729 4.67157288,11 5.5,11 C6.32842712,11 7,11.6715729 7,12.5 C7,13.3284271 6.32842712,14 5.5,14 Z M5.5,19 C4.67157288,19 4,18.3284271 4,17.5 C4,16.6715729 4.67157288,16 5.5,16 C6.32842712,16 7,16.6715729 7,17.5 C7,18.3284271 6.32842712,19 5.5,19 Z"></path>
+              </svg>
+            )}
+          </ControlButton>
+        ))}
+      </ListControls>
+    </EditorContainer>
+  );
+};
+
+
+export default ListOnlyEditor;
+
+// Styled components
+const EditorContainer = styled.div`
+  /* border: 1px solid #e3e3e4;
+  border-radius: 8px;
+  padding: 15px;
+  background: white; */
+
+`;
+
+const StyledEditorWrapper = styled.div`
+  max-height: 145px;
+  min-height: 145px;
+  overflow-y: auto;
+  padding-right: 8px;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background-color: #888;
+    border-radius: 8px;
+    border: 2px solid #f0f0f0;
+  }
+`;
+
+const ListControls = styled.div`
+  display: flex;
+  gap: 8px;
+  margin-top: 5px;
+  /* margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0f0f0; */
+`;
+
+const ControlButton = styled.button`
+  /* padding: 3px 6px; */
+  padding-top: 3px;
+  color: ${(props) => (props.active ? '#1688fe' : '#333')};
+  border-radius: 4px;
+  cursor: pointer;
+  border: none;
+  background: ${(props) => (props.active ? '#f0f8ff' : 'transparent')};
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: #f0f8ff;
+    color: #1688fe;
+  }
+
+  svg {
+    fill: ${(props) => (props.active ? '#1688fe' : '#333')};
+  }
+  /* font-weight: bold; */
+
+  &:hover {
+    border-color: #1688fe;
+  }
+`;
+
+const StyledEditor = styled(Editor)`
+  min-height: 200px;
+  font-size: 14px;
+  line-height: 1.6;
+
+  .public-DraftEditor-content {
+    min-height: 150px;
+
+    ul {
+      padding-left: 20px;
+      list-style-type: disc;
+    }
+
+    ol {
+      padding-left: 20px;
+      list-style-type: decimal;
+    }
+
+    .public-DraftStyleDefault-unorderedListItem,
+    .public-DraftStyleDefault-orderedListItem {
+      margin: 4px 0;
+    }
+  }
+
+  .public-DraftEditorPlaceholder-root {
+    color: #999;
+    font-style: italic;
+  }
+`;
+
